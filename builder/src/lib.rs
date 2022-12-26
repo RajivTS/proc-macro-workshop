@@ -12,9 +12,14 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let builder_name = Ident::new(builder_name.as_str(), Span::call_site());
     let struct_props = struct_props(&input.data);
     let struct_init = struct_empty_init(&input.data);
+    let struct_prop_setters = struct_prop_setters(&input.data);
     let expanded = quote! {
         pub struct #builder_name {
             #struct_props
+        }
+
+        impl #builder_name {
+            #struct_prop_setters
         }
 
         impl #name {
@@ -41,9 +46,9 @@ fn struct_props(data: &Data) -> TokenStream {
                     #(#props,)*
                 }
             }
-            _ => unimplemented!(),
+            _ => unimplemented!("Builder macro is supported only for named structs"),
         },
-        Data::Enum(_) | Data::Union(_) => unimplemented!(),
+        Data::Enum(_) | Data::Union(_) => unimplemented!("Builder macro is not supported for Unions or Enums"),
     }
 }
 
@@ -59,8 +64,32 @@ fn struct_empty_init(data: &Data) -> TokenStream {
                     #(#props,)*
                 }
             }
-            _ => unimplemented!(),
+            _ => unimplemented!("Builder macro is supported only for named structs"),
         },
-        Data::Enum(_) | Data::Union(_) => unimplemented!(),
+        Data::Enum(_) | Data::Union(_) => unimplemented!("Builder macro is not supported for Unions or Enums"),
     }    
+}
+
+fn struct_prop_setters(data: &Data) -> TokenStream {
+    match *data {
+        Data::Struct(ref data) => match data.fields {
+            Fields::Named(ref fields) => {
+                let prop_setters = fields.named.iter().map(|f| {
+                    let name = &f.ident;
+                    let ty = &f.ty;
+                    quote_spanned! { f.span() => 
+                        fn #name(&mut self, #name: #ty) -> &mut Self {
+                            self.#name = Some(#name);
+                            self
+                        }
+                    }
+                });
+                quote! {
+                    #(#prop_setters)*
+                }
+            },
+            _ => unimplemented!("Builder macro is supported only for named structs"),
+        },
+        Data::Enum(_) | Data::Union(_) => unimplemented!("Builder macro is not supported for Unions or Enums"),
+    }
 }
