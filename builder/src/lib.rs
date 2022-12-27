@@ -1,6 +1,9 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields, FieldsNamed, Ident};
+use syn::{
+    parse_macro_input, spanned::Spanned, AngleBracketedGenericArguments, Data, DeriveInput, Field,
+    Fields, FieldsNamed, Ident, Path, PathArguments, PathSegment, Type, TypePath, GenericArgument,
+};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -55,7 +58,11 @@ fn builder_init(data: &Data) -> TokenStream {
     parse_struct(data, |fields| {
         let props = fields.named.iter().map(|f| {
             let name = &f.ident;
-            quote_spanned! { f.span() => #name : None }
+            if is_option(f) {
+                quote_spanned! { f.span() => #name: Some(None)}
+            } else {
+                quote_spanned! { f.span() => #name : None }
+            }
         });
         quote! {
             #(#props,)*
@@ -68,10 +75,20 @@ fn builder_prop_setters(data: &Data) -> TokenStream {
         let prop_setters = fields.named.iter().map(|f| {
             let name = &f.ident;
             let ty = &f.ty;
-            quote_spanned! { f.span() =>
-                fn #name(&mut self, #name: #ty) -> &mut Self {
-                    self.#name = Some(#name);
-                    self
+            if is_option(f) {
+                let ty = type_within_option(f);
+                quote_spanned! { f.span() =>
+                    fn #name(&mut self, #name: #ty) -> &mut Self {
+                        self.#name = Some(Some(#name));
+                        self
+                    }
+                }
+            } else {
+                quote_spanned! { f.span() =>
+                    fn #name(&mut self, #name: #ty) -> &mut Self {
+                        self.#name = Some(#name);
+                        self
+                    }
                 }
             }
         });
@@ -106,4 +123,42 @@ where
             unimplemented!("Builder macro is not supported for Unions or Enums")
         }
     }
+}
+
+fn is_option(f: &Field) -> bool {
+    match &f.ty {
+        Type::Path(TypePath {
+            qself: None,
+            path: Path { segments, .. },
+        }) => {
+            if segments.len() != 1 {
+                return false;
+            }
+            segments
+                .first()
+                .map(|segment| segment.ident.to_string() == "Option")
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+fn type_within_option(f: &Field) -> Option<&Type> {
+    if let Type::Path(TypePath {
+        qself: None,
+        path: Path { segments, .. },
+    }) = &f.ty
+    {
+        if let Some(PathSegment {
+            arguments: PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }),
+            ..
+        }) = segments.first()
+        {
+            if let Some(GenericArgument::Type(ty)) = args.first() {
+                return Some(ty);
+            }
+        }
+    };
+    None
+
 }
