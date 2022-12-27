@@ -2,10 +2,10 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{
     parse_macro_input, spanned::Spanned, AngleBracketedGenericArguments, Data, DeriveInput, Field,
-    Fields, FieldsNamed, Ident, Path, PathArguments, PathSegment, Type, TypePath, GenericArgument,
+    Fields, FieldsNamed, GenericArgument, Ident, Path, PathArguments, PathSegment, Type, TypePath,
 };
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
@@ -114,15 +114,24 @@ fn parse_struct<F>(data: &Data, quote_generator: F) -> TokenStream
 where
     F: FnOnce(&FieldsNamed) -> TokenStream,
 {
-    match *data {
+    let output = match *data {
         Data::Struct(ref data) => match data.fields {
-            Fields::Named(ref fields) => quote_generator(fields),
-            _ => unimplemented!("Builder macro is supported only for named structs"),
+            Fields::Named(ref fields) => Ok(quote_generator(fields)),
+            _ => Err(syn::Error::new_spanned(
+                data.struct_token,
+                "Builder macro is supported only for named structs",
+            )),
         },
-        Data::Enum(_) | Data::Union(_) => {
-            unimplemented!("Builder macro is not supported for Unions or Enums")
-        }
-    }
+        Data::Enum(ref e) => Err(syn::Error::new_spanned(
+            e.enum_token,
+            "Builder macro is not supported for Enums",
+        )),
+        Data::Union(ref e) => Err(syn::Error::new_spanned(
+            e.union_token,
+            "Builder macro is not supported for Unions",
+        )),
+    };
+    output.unwrap_or_else(syn::Error::into_compile_error)
 }
 
 fn is_option(f: &Field) -> bool {
@@ -160,5 +169,55 @@ fn type_within_option(f: &Field) -> Option<&Type> {
         }
     };
     None
+}
 
+fn repeated_field_name(f: &Field) -> syn::Result<Option<Ident>> {
+    for attr in &f.attrs {
+        if attr.path.is_ident("builder") {
+            let meta = attr.parse_meta()?;
+            let meta_list = match meta {
+                syn::Meta::List(list) => list,
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        meta,
+                        "Expected a list style attribute",
+                    ))
+                }
+            };
+            let nested = match meta_list.nested.len() {
+                1 => &meta_list.nested[0],
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        meta_list.nested,
+                        "Exactly one argument is supported for the builder attribute",
+                    ))
+                }
+            };
+            let name_value = match nested {
+                syn::NestedMeta::Meta(syn::Meta::NameValue(nv)) => nv,
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        nested,
+                        "Expected name-value pair argument e.g. `each = \"repeated_field\"`",
+                    ))
+                }
+            };
+            if !name_value.path.is_ident("each") {
+                return Err(syn::Error::new_spanned(
+                    &name_value.path,
+                    "Expected attribute argument to be named `each`",
+                ));
+            }
+            return match &name_value.lit {
+                syn::Lit::Str(s) => {
+                    syn::parse_str(&s.value()).map_err(|e| syn::Error::new_spanned(s, e))
+                }
+                lit => Err(syn::Error::new_spanned(
+                    lit,
+                    "Expected string literal for attribute value of `each`",
+                )),
+            }
+        }
+    }
+    Ok(None)
 }
