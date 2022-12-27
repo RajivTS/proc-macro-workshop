@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields, Ident, FieldsNamed};
+use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields, FieldsNamed, Ident};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -8,21 +8,22 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let name = input.ident;
     let builder_name = format!("{}Builder", name.to_string());
     let builder_name = Ident::new(builder_name.as_str(), Span::call_site());
-    let struct_props = struct_props(&input.data);
+    let builder_props = builder_props(&input.data);
     let builder_init = builder_init(&input.data);
-    let struct_prop_setters = struct_prop_setters(&input.data);
+    let builder_prop_setters = builder_prop_setters(&input.data);
+    let struct_init = struct_init(&input.data);
     let expanded = quote! {
         pub struct #builder_name {
-            #struct_props
+            #builder_props
         }
 
         impl #builder_name {
-            #struct_prop_setters
+            #builder_prop_setters
 
-            pub fn build(&mut self) -> Result<#name, Box<dyn Error>> {
-                #name {
-
-                }
+            pub fn build(&mut self) -> Result<#name, Box<dyn std::error::Error>> {
+                Ok(#name {
+                    #struct_init
+                })
             }
         }
 
@@ -37,7 +38,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     proc_macro::TokenStream::from(expanded)
 }
 
-fn struct_props(data: &Data) -> TokenStream {
+fn builder_props(data: &Data) -> TokenStream {
     parse_struct(data, |fields| {
         let props = fields.named.iter().map(|f| {
             let name = &f.ident;
@@ -62,7 +63,7 @@ fn builder_init(data: &Data) -> TokenStream {
     })
 }
 
-fn struct_prop_setters(data: &Data) -> TokenStream {
+fn builder_prop_setters(data: &Data) -> TokenStream {
     parse_struct(data, |fields| {
         let prop_setters = fields.named.iter().map(|f| {
             let name = &f.ident;
@@ -80,6 +81,18 @@ fn struct_prop_setters(data: &Data) -> TokenStream {
     })
 }
 
+fn struct_init(data: &Data) -> TokenStream {
+    parse_struct(data, |fields| {
+        let prop_setters = fields.named.iter().map(|f| {
+            let name = &f.ident;
+            quote_spanned! { f.span() => #name: self.#name.take().ok_or("Missing required property")? }
+        });
+        quote! {
+            #(#prop_setters,)*
+        }
+    })
+}
+
 fn parse_struct<F>(data: &Data, quote_generator: F) -> TokenStream
 where
     F: FnOnce(&FieldsNamed) -> TokenStream,
@@ -92,5 +105,5 @@ where
         Data::Enum(_) | Data::Union(_) => {
             unimplemented!("Builder macro is not supported for Unions or Enums")
         }
-    }    
+    }
 }
