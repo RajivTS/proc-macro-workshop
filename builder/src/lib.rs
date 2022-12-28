@@ -23,8 +23,8 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         impl #builder_name {
             #builder_prop_setters
 
-            pub fn build(&mut self) -> Result<#name, Box<dyn std::error::Error>> {
-                Ok(#name {
+            pub fn build(&mut self) -> std::result::Result<#name, std::boxed::Box<dyn std::error::Error>> {
+                std::result::Result::Ok(#name {
                     #struct_init
                 })
             }
@@ -46,7 +46,7 @@ fn builder_props(data: &Data) -> TokenStream {
         let props = fields.named.iter().map(|f| {
             let name = &f.ident;
             let ty = &f.ty;
-            quote_spanned! { f.span() => #name : Option<#ty> }
+            quote_spanned! { f.span() => #name : std::option::Option<#ty> }
         });
         Ok(quote! {
             #(#props,)*
@@ -62,11 +62,11 @@ fn builder_init(data: &Data) -> TokenStream {
             .map(|f| {
                 let name = &f.ident;
                 if is_option(f) {
-                    Ok(quote_spanned! { f.span() => #name: Some(None)})
+                    Ok(quote_spanned! { f.span() => #name: std::option::Option::Some(std::option::Option::None)})
                 } else if let Some(_) = repeated_field_name(f)? {
-                    Ok(quote_spanned! { f. span() => #name: Some(Vec::new()) })
+                    Ok(quote_spanned! { f. span() => #name: std::option::Option::Some(std::vec::Vec::new()) })
                 } else {
-                    Ok(quote_spanned! { f.span() => #name : None })
+                    Ok(quote_spanned! { f.span() => #name : std::option::Option::None })
                 }
             })
             .collect::<syn::Result<Vec<_>>>()?;
@@ -90,7 +90,7 @@ fn builder_prop_setters(data: &Data) -> TokenStream {
                     let ty = type_within(f);
                     Ok(quote_spanned! { f.span() =>
                         fn #name(&mut self, #name: #ty) -> &mut Self {
-                            self.#name = Some(Some(#name));
+                            self.#name = std::option::Option::Some(std::option::Option::Some(#name));
                             self
                         }
                     })
@@ -98,7 +98,7 @@ fn builder_prop_setters(data: &Data) -> TokenStream {
                     if repeated_field.to_string() == name.to_string() {
                         Ok(quote_spanned! { f.span() =>
                             fn #name(&mut self, #name: #ty) -> &mut Self {
-                                self.#name = Some(#name);
+                                self.#name = std::option::Option::Some(#name);
                                 self
                             }
                         })
@@ -106,7 +106,7 @@ fn builder_prop_setters(data: &Data) -> TokenStream {
                         let ty = type_within(f);
                         Ok(quote_spanned! { f.span() =>
                             fn #repeated_field(&mut self, #repeated_field: #ty) -> &mut Self {
-                                self.#name = self.#name.take().or(Some(Vec::new())).map(|mut lst| {
+                                self.#name = self.#name.take().or(std::option::Option::Some(std::vec::Vec::new())).map(|mut lst| {
                                     lst.push(#repeated_field);
                                     lst
                                 });
@@ -117,7 +117,7 @@ fn builder_prop_setters(data: &Data) -> TokenStream {
                 } else {
                     Ok(quote_spanned! { f.span() =>
                         fn #name(&mut self, #name: #ty) -> &mut Self {
-                            self.#name = Some(#name);
+                            self.#name = std::option::Option::Some(#name);
                             self
                         }
                     })
@@ -212,7 +212,7 @@ fn repeated_field_name(f: &Field) -> syn::Result<Option<Ident>> {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         meta,
-                        "Expected a list style attribute",
+                        "expected `builder(each = \"...\")`",
                     ))
                 }
             };
@@ -221,7 +221,7 @@ fn repeated_field_name(f: &Field) -> syn::Result<Option<Ident>> {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         meta_list.nested,
-                        "Exactly one argument is supported for the builder attribute",
+                        "expected `builder(each = \"...\")`",
                     ))
                 }
             };
@@ -230,14 +230,14 @@ fn repeated_field_name(f: &Field) -> syn::Result<Option<Ident>> {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         nested,
-                        "Expected name-value pair argument e.g. `each = \"repeated_field\"`",
+                        "expected `builder(each = \"...\")`",
                     ))
                 }
             };
             if !name_value.path.is_ident("each") {
                 return Err(syn::Error::new_spanned(
-                    &name_value.path,
-                    "Expected attribute argument to be named `each`",
+                    name_value,
+                    "expected `builder(each = \"...\")`",
                 ));
             }
             return match &name_value.lit {
@@ -246,7 +246,7 @@ fn repeated_field_name(f: &Field) -> syn::Result<Option<Ident>> {
                 }
                 lit => Err(syn::Error::new_spanned(
                     lit,
-                    "Expected string literal for attribute value of `each`",
+                    "expected `builder(each = \"...\")`",
                 )),
             };
         }
