@@ -48,53 +48,85 @@ fn builder_props(data: &Data) -> TokenStream {
             let ty = &f.ty;
             quote_spanned! { f.span() => #name : Option<#ty> }
         });
-        quote! {
+        Ok(quote! {
             #(#props,)*
-        }
+        })
     })
 }
 
 fn builder_init(data: &Data) -> TokenStream {
     parse_struct(data, |fields| {
-        let props = fields.named.iter().map(|f| {
-            let name = &f.ident;
-            if is_option(f) {
-                quote_spanned! { f.span() => #name: Some(None)}
-            } else {
-                quote_spanned! { f.span() => #name : None }
-            }
-        });
-        quote! {
+        let props = fields
+            .named
+            .iter()
+            .map(|f| {
+                let name = &f.ident;
+                if is_option(f) {
+                    Ok(quote_spanned! { f.span() => #name: Some(None)})
+                } else if let Some(_) = repeated_field_name(f)? {
+                    Ok(quote_spanned! { f. span() => #name: Some(Vec::new()) })
+                } else {
+                    Ok(quote_spanned! { f.span() => #name : None })
+                }
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        Ok(quote! {
             #(#props,)*
-        }
+        })
     })
 }
 
 fn builder_prop_setters(data: &Data) -> TokenStream {
     parse_struct(data, |fields| {
-        let prop_setters = fields.named.iter().map(|f| {
-            let name = &f.ident;
-            let ty = &f.ty;
-            if is_option(f) {
-                let ty = type_within_option(f);
-                quote_spanned! { f.span() =>
-                    fn #name(&mut self, #name: #ty) -> &mut Self {
-                        self.#name = Some(Some(#name));
-                        self
+        let prop_setters = fields
+            .named
+            .iter()
+            .map(|f| {
+                let name = f.ident.as_ref().ok_or_else(|| {
+                    syn::Error::new_spanned(f.ident.as_ref(), "Struct field name absent")
+                })?;
+                let ty = &f.ty;
+                if is_option(f) {
+                    let ty = type_within(f);
+                    Ok(quote_spanned! { f.span() =>
+                        fn #name(&mut self, #name: #ty) -> &mut Self {
+                            self.#name = Some(Some(#name));
+                            self
+                        }
+                    })
+                } else if let Some(repeated_field) = repeated_field_name(f)? {
+                    if repeated_field.to_string() == name.to_string() {
+                        Ok(quote_spanned! { f.span() =>
+                            fn #name(&mut self, #name: #ty) -> &mut Self {
+                                self.#name = Some(#name);
+                                self
+                            }
+                        })
+                    } else {
+                        let ty = type_within(f);
+                        Ok(quote_spanned! { f.span() =>
+                            fn #repeated_field(&mut self, #repeated_field: #ty) -> &mut Self {
+                                self.#name = self.#name.take().or(Some(Vec::new())).map(|mut lst| {
+                                    lst.push(#repeated_field);
+                                    lst
+                                });
+                                self
+                            }
+                        })
                     }
+                } else {
+                    Ok(quote_spanned! { f.span() =>
+                        fn #name(&mut self, #name: #ty) -> &mut Self {
+                            self.#name = Some(#name);
+                            self
+                        }
+                    })
                 }
-            } else {
-                quote_spanned! { f.span() =>
-                    fn #name(&mut self, #name: #ty) -> &mut Self {
-                        self.#name = Some(#name);
-                        self
-                    }
-                }
-            }
-        });
-        quote! {
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        Ok(quote! {
             #(#prop_setters)*
-        }
+        })
     })
 }
 
@@ -104,19 +136,19 @@ fn struct_init(data: &Data) -> TokenStream {
             let name = &f.ident;
             quote_spanned! { f.span() => #name: self.#name.take().ok_or("Missing required property")? }
         });
-        quote! {
+        Ok(quote! {
             #(#prop_setters,)*
-        }
+        })
     })
 }
 
 fn parse_struct<F>(data: &Data, quote_generator: F) -> TokenStream
 where
-    F: FnOnce(&FieldsNamed) -> TokenStream,
+    F: FnOnce(&FieldsNamed) -> syn::Result<TokenStream>,
 {
     let output = match *data {
         Data::Struct(ref data) => match data.fields {
-            Fields::Named(ref fields) => Ok(quote_generator(fields)),
+            Fields::Named(ref fields) => quote_generator(fields),
             _ => Err(syn::Error::new_spanned(
                 data.struct_token,
                 "Builder macro is supported only for named structs",
@@ -152,7 +184,7 @@ fn is_option(f: &Field) -> bool {
     }
 }
 
-fn type_within_option(f: &Field) -> Option<&Type> {
+fn type_within(f: &Field) -> Option<&Type> {
     if let Type::Path(TypePath {
         qself: None,
         path: Path { segments, .. },
@@ -216,7 +248,7 @@ fn repeated_field_name(f: &Field) -> syn::Result<Option<Ident>> {
                     lit,
                     "Expected string literal for attribute value of `each`",
                 )),
-            }
+            };
         }
     }
     Ok(None)
