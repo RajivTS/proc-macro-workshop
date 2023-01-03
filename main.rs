@@ -8,15 +8,15 @@
 use derive_debug::CustomDebug;
 
 #[derive(CustomDebug)]
-pub struct Field {
-    name: &'static str,
+pub struct Field<T> {
+    value: T,
     #[debug = "0b{:08b}"]
     bitmask: u8,
 }
 
 fn main() {
     let _ = Field {
-        name: "F",
+        value: "F",
         bitmask: 0b00011100,
     };
 }

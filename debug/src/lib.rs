@@ -1,10 +1,12 @@
 use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, spanned::Spanned, DeriveInput};
+use syn::{parse_macro_input, parse_quote, spanned::Spanned, DeriveInput, GenericParam, Generics};
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
+    let mut input = parse_macro_input!(input as DeriveInput);
     let struct_name = &input.ident;
+    add_debug_trait_bound(&mut input.generics);
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let fields = if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(syn::FieldsNamed { named, .. }),
         ..
@@ -31,10 +33,10 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     }).collect::<syn::Result<Vec<_>>>();
     let debug_fields = match debug_fields {
         Err(e) => return e.to_compile_error().into(),
-        Ok(v) => v
+        Ok(v) => v,
     };
     let expanded = quote! {
-        impl ::std::fmt::Debug for #struct_name {
+        impl #impl_generics ::std::fmt::Debug for #struct_name #ty_generics #where_clause {
             fn fmt(&self, fmt: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
                 fmt.debug_struct(stringify!(#struct_name))
                 #(#debug_fields)*
@@ -74,4 +76,13 @@ fn debug_attr(attrs: &Vec<syn::Attribute>) -> syn::Result<Option<String>> {
         }
     }
     Ok(None)
+}
+
+fn add_debug_trait_bound(generics: &mut Generics) {
+    for param in &mut generics.params {
+        if let GenericParam::Type(ref mut type_param) = *param {
+            type_param.bounds.push(parse_quote!(::std::fmt::Debug))
+        }
+    }
+    // generics
 }
