@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use quote::{quote, quote_spanned};
 use syn::{parse_macro_input, parse_quote, spanned::Spanned, DeriveInput, GenericParam, Generics};
 
@@ -5,8 +7,6 @@ use syn::{parse_macro_input, parse_quote, spanned::Spanned, DeriveInput, Generic
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut input = parse_macro_input!(input as DeriveInput);
     let struct_name = &input.ident;
-    add_debug_trait_bound(&mut input.generics);
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let fields = if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(syn::FieldsNamed { named, .. }),
         ..
@@ -18,6 +18,18 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             .to_compile_error()
             .into();
     };
+    let mut non_phatom_generic_idents = HashSet::new();
+    for field in fields.iter() {
+        if let Some(generic_type) = non_phantom_generic_field_type(&field.ty) {
+            non_phatom_generic_idents.insert(generic_type);
+        }
+    }
+    add_debug_trait_bound(&mut input.generics, &non_phatom_generic_idents);
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    // let print_fields = fields.iter().map(|f| {
+    //     eprintln!("Field: {:#?}\n\n", f.ty);
+    //     quote!(())
+    // });
     let debug_fields = fields.iter().map(|f| {
         let custom_debug = debug_attr(&f.attrs)?;
         match custom_debug {
@@ -43,6 +55,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 .finish()
             }
         }
+        // #(#print_fields)*
     };
     proc_macro::TokenStream::from(expanded)
 }
@@ -78,11 +91,44 @@ fn debug_attr(attrs: &Vec<syn::Attribute>) -> syn::Result<Option<String>> {
     Ok(None)
 }
 
-fn add_debug_trait_bound(generics: &mut Generics) {
+fn add_debug_trait_bound(
+    generics: &mut Generics,
+    non_phatom_generic_idents: &HashSet<proc_macro2::Ident>,
+) {
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
-            type_param.bounds.push(parse_quote!(::std::fmt::Debug))
+            if non_phatom_generic_idents.contains(&type_param.ident) {
+                type_param.bounds.push(parse_quote!(::std::fmt::Debug))
+            }
         }
     }
-    // generics
+}
+
+fn non_phantom_generic_field_type(ty: &syn::Type) -> Option<proc_macro2::Ident> {
+    if let syn::Type::Path(syn::TypePath {
+        path: syn::Path { segments, .. },
+        ..
+    }) = ty
+    {
+        if let Some(syn::PathSegment {
+            arguments: syn::PathArguments::None,
+            ident,
+        }) = segments.first()
+        {
+            return Some(ident.clone());
+        } else if let Some(syn::PathSegment {
+            ident,
+            arguments:
+                syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
+        }) = segments.first()
+        {
+            if ident == "PhantomData" {
+                return None;
+            }
+            if let Some(syn::GenericArgument::Type(typ)) = args.first() {
+                return non_phantom_generic_field_type(typ);
+            }
+        }
+    }
+    None
 }
