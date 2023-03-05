@@ -19,13 +19,18 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             .into();
     };
     let mut non_phatom_generic_idents = HashSet::new();
+    let mut associated_types = HashSet::new();
     for field in fields.iter() {
         if let Some(generic_type) = non_phantom_generic_field_type(&field.ty) {
             non_phatom_generic_idents.insert(generic_type);
         }
+        if let Some(associated_type) = associated_type(&field.ty) {
+            associated_types.insert(associated_type);
+        }
     }
     add_debug_trait_bound(&mut input.generics, &non_phatom_generic_idents);
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let where_clause = debug_where_clause(&associated_types);
+    let (impl_generics, ty_generics, _) = input.generics.split_for_impl();
     // let print_fields = fields.iter().map(|f| {
     //     eprintln!("Field: {:#?}\n\n", f.ty);
     //     quote!(())
@@ -104,6 +109,24 @@ fn add_debug_trait_bound(
     }
 }
 
+fn debug_where_clause(
+    associated_types: &HashSet<(proc_macro2::Ident, proc_macro2::Ident)>,
+) -> Option<syn::WhereClause> {
+    let mut where_clauses = vec![];
+    for (core_ty, associated_ty) in associated_types {
+        where_clauses.push(format!(
+            "{}::{}: Debug",
+            core_ty.to_string(),
+            associated_ty.to_string()
+        ));
+    }
+    if where_clauses.len() == 0 {
+        None
+    } else {
+        syn::parse_str(&format!("where {}", where_clauses.join(", "))).ok()
+    }
+}
+
 fn non_phantom_generic_field_type(ty: &syn::Type) -> Option<proc_macro2::Ident> {
     if let syn::Type::Path(syn::TypePath {
         path: syn::Path { segments, .. },
@@ -115,7 +138,9 @@ fn non_phantom_generic_field_type(ty: &syn::Type) -> Option<proc_macro2::Ident> 
             ident,
         }) = segments.first()
         {
-            return Some(ident.clone());
+            if segments.len() == 1 {
+                return Some(ident.clone());
+            }
         } else if let Some(syn::PathSegment {
             ident,
             arguments:
@@ -127,6 +152,39 @@ fn non_phantom_generic_field_type(ty: &syn::Type) -> Option<proc_macro2::Ident> 
             }
             if let Some(syn::GenericArgument::Type(typ)) = args.first() {
                 return non_phantom_generic_field_type(typ);
+            }
+        }
+    }
+    None
+}
+
+fn associated_type(ty: &syn::Type) -> Option<(proc_macro2::Ident, proc_macro2::Ident)> {
+    if let syn::Type::Path(syn::TypePath {
+        path: syn::Path { segments, .. },
+        ..
+    }) = ty
+    {
+        let mut segments_iter = segments.iter();
+        if let Some(syn::PathSegment {
+            arguments: syn::PathArguments::None,
+            ident: core_type,
+        }) = segments_iter.next()
+        {
+            if let Some(syn::PathSegment {
+                arguments: syn::PathArguments::None,
+                ident: associated_type,
+            }) = segments_iter.next()
+            {
+                return Some((core_type.clone(), associated_type.clone()));
+            }
+        } else if let Some(syn::PathSegment {
+            arguments:
+                syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
+            ..
+        }) = segments.first()
+        {
+            if let Some(syn::GenericArgument::Type(typ)) = args.first() {
+                return associated_type(typ);
             }
         }
     }
