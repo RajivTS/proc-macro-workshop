@@ -1,58 +1,24 @@
-// There are some cases where no heuristic would be sufficient to infer the
-// right trait bounds based only on the information available during macro
-// expansion.
+// At this point we have an enum and we need to check whether the variants
+// appear in sorted order!
 //
-// When this happens, we'll turn to attributes as a way for the caller to
-// handwrite the correct trait bounds themselves.
+// When your implementation notices a variant that compares lexicographically
+// less than one of the earlier variants, you'll want to construct a syn::Error
+// that gets converted to TokenStream by the already existing code that handled
+// this conversion during the previous test case.
 //
-// The impl for Wrapper<T> in the code below will need to include the bounds
-// provided in the `debug(bound = "...")` attribute. When such an attribute is
-// present, also disable all inference of bounds so that the macro does not
-// attach its own `T: Debug` inferred bound.
-//
-//     impl<T: Trait> Debug for Wrapper<T>
-//     where
-//         T::Value: Debug,
-//     {...}
-//
-// Optionally, though this is not covered by the test suite, also accept
-// `debug(bound = "...")` attributes on individual fields. This should
-// substitute only whatever bounds are inferred based on that field's type,
-// without removing bounds inferred based on the other fields:
-//
-//     #[derive(CustomDebug)]
-//     pub struct Wrapper<T: Trait, U> {
-//         #[debug(bound = "T::Value: Debug")]
-//         field: Field<T>,
-//         normal: U,
-//     }
+// The "span" of your error, which determines where the compiler places the
+// resulting error message, will be the span of whichever variant name that is
+// not in the right place. Ideally the error message should also identify which
+// other variant the user needs to move this one to be in front of.
 
-use derive_debug::CustomDebug;
-use std::fmt::Debug;
+use sorted::sorted;
 
-pub trait Trait {
-    type Value;
+#[sorted]
+pub enum Error {
+    ThatFailed,
+    ThisFailed,
+    SomethingFailed,
+    WhoKnowsWhatFailed,
 }
 
-#[derive(CustomDebug)]
-#[debug(bound = "T::Value: Debug")]
-pub struct Wrapper<T: Trait> {
-    field: Field<T>,
-}
-
-#[derive(CustomDebug)]
-struct Field<T: Trait> {
-    values: Vec<T::Value>,
-}
-
-fn assert_debug<F: Debug>() {}
-
-fn main() {
-    struct Id;
-
-    impl Trait for Id {
-        type Value = u8;
-    }
-
-    assert_debug::<Wrapper<Id>>();
-}
+fn main() {}
