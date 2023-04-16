@@ -40,7 +40,7 @@ fn validate_enum_ordering(enum_item: syn::ItemEnum) -> syn::Result<syn::ItemEnum
                 .find(|&variant| out_of_place.ident.cmp(&variant.ident) == Ordering::Less)
                 .unwrap_or(out_of_place);
             Err(syn::Error::new_spanned(
-                out_of_place,
+                &out_of_place.ident,
                 format!(
                     "{} should sort before {}",
                     out_of_place.ident, swap_with.ident
